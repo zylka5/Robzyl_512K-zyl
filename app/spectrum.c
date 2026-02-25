@@ -3543,9 +3543,7 @@ static bool GetScanListLabel(uint8_t scanListIndex, char* bufferOut) {
 
     char nameOrFreq[13];
     if (channel_name[0] == '\0') {
-        uint32_t freq = gMR_ChannelFrequencyAttributes[first_channel].Frequency;
-        sprintf(nameOrFreq, "%u.%05u", freq / 100000, freq % 100000);
-        RemoveTrailZeros(nameOrFreq);
+        sprintf(nameOrFreq, "SL %d", scanListIndex + 1);
     } else {
         strncpy(nameOrFreq, channel_name, 12);
         nameOrFreq[12] = '\0';
@@ -3847,14 +3845,19 @@ static void RenderList(const char* title, uint16_t numItems, uint16_t selectedIn
 // Fonction pour afficher le menu ScanList
 static void RenderScanListSelect() {
   BuildValidScanListIndices();
-  uint8_t selectedCount = 0;
+  uint16_t selectedChannels = 0;
   for (uint8_t i = 0; i < validScanListCount; i++) {
-    if (settings.scanListEnabled[validScanListIndices[i]]) {
-      selectedCount++;
+    uint8_t realIndex = validScanListIndices[i];
+    if (settings.scanListEnabled[realIndex]) {
+      for (uint16_t j = 0; j < MR_CHANNEL_LAST + 1; j++) {
+        if (gMR_ChannelAttributes[j].scanlist == realIndex + 1) {
+          selectedChannels++;
+        }
+      }
     }
   }
   char title[24];
-  snprintf(title, sizeof(title), "SCANLISTS: %u/%u", selectedCount, validScanListCount);
+  snprintf(title, sizeof(title), "SCANLISTS: %u/%u", validScanListCount, selectedChannels);
   RenderList(title, validScanListCount,scanListSelectedIndex, scanListScrollOffset, GetFilteredScanListText, true);
 }
 
