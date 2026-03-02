@@ -10,7 +10,7 @@
 #include "action.h"
 #include "bands.h"
 #include "ui/main.h"
-//#include "debugging.h"
+#include "debugging.h"
 
 /*	
           /////////////////////////DEBUG//////////////////////////
@@ -1786,35 +1786,72 @@ if (appMode==CHANNEL_MODE)
   
 }
 
-static void nextFrequency833() {
-    if (scanInfo.i % 3 != 1) {
-        scanInfo.f += 833;
-    } else {
-        scanInfo.f += 834;
+static void nextFrequencyinterlaced() {
+    static uint16_t lastStep = 0;
+    static uint16_t jumpSize = 2500;
+    static uint16_t loops = 1;
+    static uint32_t columns = 0;
+
+    // Recalcul des constantes si le pas change
+    if (scanInfo.scanStep != lastStep) {
+        lastStep = scanInfo.scanStep;
+        
+        uint8_t idx = 0;
+        for (uint8_t i = 0; i < sizeof(scanStepValues)/sizeof(scanStepValues[0]); i++) {
+            if (scanStepValues[i] == lastStep) {
+                idx = i;
+                break;
+            }
+        }
+        
+        jumpSize = jumpSizes[idx];
+        loops    = interlacedLoops[idx];
+        
+        // Calcul du nombre de colonnes (nombre de sauts de 25k ou 30k)
+        // On utilise le nombre total de pas divisé par le nombre de passages
+        columns = (GetStepsCount() + (loops - 1)) / loops;
+        if (columns == 0) columns = 1;
     }
+
+    // Calcul des coordonnées dans la grille d'entrelacement
+    uint32_t currentColumn = scanInfo.i % columns;
+    uint32_t currentPass   = scanInfo.i / columns;
+
+    // Calcul de la fréquence : Start + (Saut * Colonne) + (Pas * Passage)
+    scanInfo.f = gScanRangeStart + (currentColumn * jumpSize) + (currentPass * lastStep);
+char str[64] = "";sprintf(str, "%d\r\n", scanInfo.f );LogUart(str);
+
 }
+
 
 static void NextScanStep() {
     spectrumElapsedCount = 0;
+    gScanStepsTotal++;
 
-	gScanStepsTotal++;
+    if (appMode == CHANNEL_MODE) { 
+        if (scanChannelsCount == 0) return;
+        
+        // Incrément classique pour les canaux
+        if (++scanInfo.i >= scanChannelsCount)
+            scanInfo.i = 0;
 
-    if (appMode==CHANNEL_MODE)
-    { 
-      if (scanChannelsCount == 0) return;
-
-      if (scanInfo.i + 1 >= scanChannelsCount)
-          scanInfo.i = 0;
-      else
-          scanInfo.i++;
-
-      int currentChannel = scanChannel[scanInfo.i];
-      scanInfo.f =  gMR_ChannelFrequencyAttributes[currentChannel].Frequency;
+        scanInfo.f = gMR_ChannelFrequencyAttributes[scanChannel[scanInfo.i]].Frequency;
     } 
     else {
-          ++scanInfo.i;
-          if(scanInfo.scanStep==833) nextFrequency833();
-          else scanInfo.f += scanInfo.scanStep;
+        // --- MODE SPECTRUM / FREQUENCE ---
+        
+        // 1. Calculer la fréquence pour l'index actuel (i commence à 0)
+        if (scanInfo.scanStep < 2500 || scanInfo.scanStep == 1000) {
+            nextFrequencyinterlaced();
+        } else {
+            // Pour les pas >= 25k, on fait un simple ajout linéaire
+            // Note : on ajoute scanStep * i pour rester en calcul absolu (plus précis)
+            scanInfo.f = gScanRangeStart + (scanInfo.i * scanInfo.scanStep);
+        }
+
+        // 2. Incrémenter l'index pour le PROCHAIN passage
+        // Si on atteint le max, UpdateScan se chargera de repasser à 0
+        scanInfo.i++;
     }
 }
 
@@ -3133,25 +3170,16 @@ static void UpdateScan() {
 
   SetF(scanInfo.f);
   Measure();
-  
-  // Si un signal est trouvé (gIsPeak), la fonction s'arrête ici grâce au return ci-dessus
-  // au prochain passage (via UpdateListening).
   if(gIsPeak || SpectrumMonitor || WaitSpectrum) return;
-  
-
-  // --- MODIFICATION ICI ---
   if (gHistoryScan && historyListActive) {
       NextHistoryScanStep();
       return;
   }
-  // ------------------------
-
   if (scanInfo.i < GetStepsCount()) {
     NextScanStep();
     return;
   }
   
-  // Scan end
   newScanStart = true; 
   Fmax = peak.f;
   
