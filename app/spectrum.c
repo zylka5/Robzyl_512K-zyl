@@ -10,11 +10,11 @@
 #include "action.h"
 #include "bands.h"
 #include "ui/main.h"
-#include "debugging.h"
+//#include "debugging.h"
 
 /*	
           /////////////////////////DEBUG//////////////////////////
-          char str[64] = "";sprintf(str, "%d\r\n", Spectrum_state );LogUart(str);
+          char str[64] = "";sprintf(str, "%d\r\n", Spectrum_state );//LogUart(str);
 */
 
 #ifdef ENABLE_SCREENSHOT
@@ -431,7 +431,7 @@ static uint32_t GetInitialStillFreq(void) {
              (unsigned long)HFreqs[0],
              (unsigned long)HFreqs[1],
              (unsigned long)HFreqs[2]);
-    LogUart(dbg);
+    //LogUart(dbg);
 } */
 
 
@@ -1125,7 +1125,7 @@ static void Measure() {
 //SYSTEM_DelayMs(200);
 /* char str[200] = "";
 sprintf(str,"%d %d %d \r\n", startIndex, j-2, rssiHistory[j-2]);
-LogUart(str); */
+//LogUart(str); */
 /////////////////////////DEBUG//////////////////////////  
 }
 
@@ -1806,7 +1806,7 @@ static void nextFrequencyinterlaced() {
     uint32_t currentColumn = scanInfo.i % columns;
     uint32_t currentPass   = scanInfo.i / columns;
     scanInfo.f = gScanRangeStart + (currentColumn * jumpSize) + (currentPass * lastStep);
-char str[64] = "";sprintf(str, "%d\r\n", scanInfo.f );LogUart(str);
+//char str[64] = "";sprintf(str, "%d\r\n", scanInfo.f );//LogUart(str);
 }
 
 
@@ -3427,7 +3427,7 @@ static void LoadValidMemoryChannels(void)
         {
           channelIndex = nextChannel;
           scanChannel[offset+i]=channelIndex;
-          //char str[64] = "";sprintf(str, "%d %d %d %d \r\n", scanChannelsCount,offset,i,channelIndex);LogUart(str);
+          //char str[64] = "";sprintf(str, "%d %d %d %d \r\n", scanChannelsCount,offset,i,channelIndex);//LogUart(str);
 		
           ScanListNumber[offset+i]=CurrentScanList;
       
@@ -3616,14 +3616,14 @@ static void SaveSettings()
   eepromData.R2B = BK4819_ReadRegister(BK4819_REG_2B);
   
 /*   char str[64] = "";
-  sprintf(str, "R40 %d \r\n", eepromData.R40);LogUart(str); //R40 13520
-  sprintf(str, "R29 %d \r\n", eepromData.R29);LogUart(str); //R29 43840
-  sprintf(str, "R19 %d \r\n", eepromData.R19);LogUart(str); //R19 4161
-  sprintf(str, "R73 %d \r\n", eepromData.R73);LogUart(str); //R73 18066
-  sprintf(str, "R13 %d \r\n", eepromData.R13);LogUart(str); //R13 958
-  sprintf(str, "R3C %d \r\n", eepromData.R3C);LogUart(str); //R3C 20360
-  sprintf(str, "R43 %d \r\n", eepromData.R43);LogUart(str); //R43 13896
-  sprintf(str, "R2B %d \r\n", eepromData.R2B);LogUart(str); //R2B 49152 */
+  sprintf(str, "R40 %d \r\n", eepromData.R40);//LogUart(str); //R40 13520
+  sprintf(str, "R29 %d \r\n", eepromData.R29);//LogUart(str); //R29 43840
+  sprintf(str, "R19 %d \r\n", eepromData.R19);//LogUart(str); //R19 4161
+  sprintf(str, "R73 %d \r\n", eepromData.R73);//LogUart(str); //R73 18066
+  sprintf(str, "R13 %d \r\n", eepromData.R13);//LogUart(str); //R13 958
+  sprintf(str, "R3C %d \r\n", eepromData.R3C);//LogUart(str); //R3C 20360
+  sprintf(str, "R43 %d \r\n", eepromData.R43);//LogUart(str); //R43 13896
+  sprintf(str, "R2B %d \r\n", eepromData.R2B);//LogUart(str); //R2B 49152 */
 
   
   // Write in 8-byte chunks
