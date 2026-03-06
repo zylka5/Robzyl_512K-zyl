@@ -71,7 +71,7 @@ static uint16_t historyListIndex = 0;
 static uint16_t indexFs = 0;
 static int historyScrollOffset = 0;
 static uint32_t    HFreqs[HISTORY_SIZE];
-static uint8_t     HCount[HISTORY_SIZE];
+static uint16_t    HCount[HISTORY_SIZE];
 static bool  HBlacklisted[HISTORY_SIZE];
 static bool gHistoryScan = false; // Indicateur de scan de l'historique
 
@@ -735,7 +735,7 @@ static void SaveHistoryToFreeChannel(void) {
 
 typedef struct HistoryStruct {
     uint32_t HFreqs;
-    uint8_t HCount;
+    uint16_t HCount;
     uint8_t HBlacklisted;
 } HistoryStruct;
 
@@ -878,54 +878,53 @@ static void ToggleAudio(bool on) {
   }
 }
 
-static void FillfreqHistory(void)
+static void FillfreqHistory(bool countHit)
 {
     uint32_t f = peak.f;
     if (f == 0 || f < 1400000 || f > 130000000) return;
 
+    uint16_t foundIndex = 0xFFFF;
+    uint16_t foundCount = 0;
+    bool foundBlacklisted = false;
+
     for (uint16_t i = 0; i < indexFs; i++) {
         if (HFreqs[i] == f) {
-            if (gCounthistory) {
-                if (lastReceivingFreq != f)
-                    HCount[i]++;
-            } else {
-                HCount[i]++;
-            }
-            lastReceivingFreq = f;
-            historyListIndex = i;
-            return;
+            foundIndex = i;
+            foundCount = HCount[i];
+            foundBlacklisted = HBlacklisted[i];
+            break;
         }
     }
 
-    uint16_t pos = 0;
-    while (pos < indexFs && HFreqs[pos] < f) {pos++;}
-
-    uint16_t count = indexFs;
-    if (count > HISTORY_SIZE) count = HISTORY_SIZE;
-
-    if (count == HISTORY_SIZE && pos >= HISTORY_SIZE) {
-        pos = HISTORY_SIZE - 1;
+    if (foundIndex != 0xFFFF) {
+        for (uint16_t i = foundIndex; i + 1 < indexFs; i++) {
+            HFreqs[i]       = HFreqs[i + 1];
+            HCount[i]       = HCount[i + 1];
+            HBlacklisted[i] = HBlacklisted[i + 1];
+        }
+        if (indexFs > 0) indexFs--;
     }
 
-    uint16_t last = (count == HISTORY_SIZE) ? (HISTORY_SIZE - 1) : count;
-    for (uint16_t i = last; i > pos; i--) {
+    uint16_t limit = (indexFs < HISTORY_SIZE) ? indexFs : (HISTORY_SIZE - 1);
+    for (int i = limit; i > 0; i--) {
         HFreqs[i]       = HFreqs[i - 1];
         HCount[i]       = HCount[i - 1];
         HBlacklisted[i] = HBlacklisted[i - 1];
     }
 
-    HFreqs[pos]       = f;
-    HCount[pos]       = 1;
-    HBlacklisted[pos] = 0;
-    lastReceivingFreq = f;
-    historyListIndex = pos;
+    HFreqs[0] = f;
+    HBlacklisted[0] = foundBlacklisted;
 
-    if (count < HISTORY_SIZE) {
-        indexFs = count + 1;
+    if (gCounthistory && countHit) {
+        HCount[0] = (foundIndex != 0xFFFF) ? (foundCount + 1) : 1;
     } else {
-        indexFs = HISTORY_SIZE;
+        HCount[0] = (foundIndex != 0xFFFF) ? foundCount : 0;
     }
-} 
+
+    if (indexFs < HISTORY_SIZE) indexFs++;
+    historyListIndex = 0;
+    lastReceivingFreq = f;
+}
 
 static void ToggleRX(bool on) {
     if (SPECTRUM_PAUSED) return;
@@ -1069,11 +1068,11 @@ static void Measure() {
         gIsPeak      = false;
         isFirst      = false;
     }
-    if (settings.rssiTriggerLevelUp == 50 && rssi > previousRssi + UOO_trigger) {
-      peak.f = scanInfo.f;
-      peak.i = scanInfo.i;
-      FillfreqHistory();
-    }
+if (settings.rssiTriggerLevelUp == 50 && rssi > previousRssi + UOO_trigger) {
+  peak.f = scanInfo.f;
+  peak.i = scanInfo.i;
+  FillfreqHistory(false);
+}
 
     if (!gIsPeak && rssi > previousRssi + settings.rssiTriggerLevelUp) {
         SYSTEM_DelayMs(10);
@@ -1829,42 +1828,46 @@ static void NextScanStep() {
         scanInfo.i++;
     }
 }
-
-static void CompactHistory(void) {
-    uint16_t w = 0;
-    uint16_t limit = (indexFs > HISTORY_SIZE) ? HISTORY_SIZE : indexFs;
-
-    for (uint16_t r = 0; r < limit; r++) {
-        if (HFreqs[r] == 0) continue;
-        if (w != r) {
-            HFreqs[w]       = HFreqs[r];
-            HCount[w]       = HCount[r];
-            HBlacklisted[w] = HBlacklisted[r];
-        }
-        w++;
-    }
-
-    // wyczyść resztę
-    for (uint16_t i = w; i < limit; i++) {
-        HFreqs[i]       = 0;
-        HCount[i]       = 0;
-        HBlacklisted[i] = 0;
-    }
-
-    indexFs = w;
-    if (indexFs == 0) {
-        historyListIndex = 0;
-        historyScrollOffset = 0;
-    } else {
-        if (historyListIndex >= indexFs) historyListIndex = indexFs - 1;
-        if (historyScrollOffset >= indexFs) {
-            historyScrollOffset = (indexFs > MAX_VISIBLE_LINES) ? (indexFs - MAX_VISIBLE_LINES) : 0;
-        }
-    }
-}
-
 static uint16_t CountValidHistoryItems() {
     return (indexFs > HISTORY_SIZE) ? HISTORY_SIZE : indexFs;
+}
+
+static void SortHistoryByFrequencyAsc(void) {
+    uint16_t count = CountValidHistoryItems();
+    if (count < 2) return;
+
+    uint32_t selectedFreq = (historyListActive && count > 0) ? HFreqs[historyListIndex] : 0;
+
+    // Prosty sort rosnący (insertion sort)
+    for (uint16_t i = 1; i < count; i++) {
+        uint32_t f = HFreqs[i];
+        uint16_t c = HCount[i];
+        bool b = HBlacklisted[i];
+
+        int j = i - 1;
+        while (j >= 0 && HFreqs[j] > f) {
+            HFreqs[j + 1] = HFreqs[j];
+            HCount[j + 1] = HCount[j];
+            HBlacklisted[j + 1] = HBlacklisted[j];
+            j--;
+        }
+        HFreqs[j + 1] = f;
+        HCount[j + 1] = c;
+        HBlacklisted[j + 1] = b;
+    }
+
+    // Odtwórz zaznaczenie
+    historyListIndex = 0;
+    if (selectedFreq != 0) {
+        for (uint16_t i = 0; i < count; i++) {
+            if (HFreqs[i] == selectedFreq) {
+                historyListIndex = i;
+                break;
+            }
+        }
+    }
+    historyScrollOffset = 0;
+    ShowOSDPopup("SORTED");
 }
 
 static void Skip() {
@@ -2478,14 +2481,15 @@ static void OnKeyDown(uint8_t key) {
     if (appMode!=SCAN_RANGE_MODE){ToggleStepsCount();}
     break;
 
-  case KEY_0:
+   case KEY_0:
     if (!historyListActive) {
-        CompactHistory();
         historyListActive = true;
         historyListIndex = 0;
         historyScrollOffset = 0;
         prevSpectrumMonitor = SpectrumMonitor;
-        }
+    } else {
+        SortHistoryByFrequencyAsc(); // nowy skrót
+    }
     break;
   
 /* next mode poprawione */ //СМЕНА РЕЖИМОВ
@@ -3166,8 +3170,11 @@ static void UpdateListening(void) { // called every 10ms
     static uint32_t stableFreq = 1;
     static uint16_t stableCount = 0;
     static bool SoundBoostsave = false; // Initialisation
-    
-    uint16_t rssi = GetRssi();
+	        // --- NOWE: detekcja transmisji + czas ---
+    static bool historyRxActive = false;
+    static uint32_t historyRxFreq = 0;
+    static uint16_t historyTimeMs = 0;
+	    uint16_t rssi = GetRssi();
     scanInfo.rssi = rssi;
     uint16_t count = GetStepsCount() + 1;
 
@@ -3208,12 +3215,42 @@ static void UpdateListening(void) { // called every 10ms
             rssiHistory[j] = rssi;
         }
     }
+	
+	    // --- NOWE: start/stop transmisji ---
+    bool rxActive = isListening && peak.f >= 1400000 && peak.f <= 130000000;
+
+    if (rxActive) {
+        if (!historyRxActive || historyRxFreq != peak.f) {
+            FillfreqHistory(true);   // 1x na start transmisji
+            historyRxActive = true;
+            historyRxFreq = peak.f;
+            historyTimeMs = 0;
+        }
+    } else {
+        historyRxActive = false;
+        historyRxFreq = 0;
+        historyTimeMs = 0;
+    }
+
+    // --- NOWE: zliczanie czasu co 1s ---
+    if (!gCounthistory && historyRxActive) {
+        historyTimeMs += 10;
+        if (historyTimeMs >= 1000) {
+            historyTimeMs -= 1000;
+            for (uint16_t h = 0; h < indexFs; h++) {
+                if (HFreqs[h] == historyRxFreq) {
+                    if (HCount[h] < 0xFFFF) HCount[h]++;
+                    break;
+                }
+            }
+        }
+    }
 
     // Détection de fréquence stable
-    if (peak.f == stableFreq) {
-        if (++stableCount >= 2) {  // ~600ms
-            if (!SpectrumMonitor) FillfreqHistory();
-            stableCount = 0;
+if (peak.f == stableFreq) {
+    if (++stableCount >= 2) {  // ~600ms
+        if (!SpectrumMonitor) FillfreqHistory(false);
+        stableCount = 0;
             if (gEeprom.BACKLIGHT_MAX > 5)
                 BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, 1);
             if(Backlight_On_Rx) BACKLIGHT_TurnOn();
@@ -3875,82 +3912,63 @@ static void GetBandItemText(uint16_t index, char* buffer) {
 
 static void GetHistoryItemText(uint16_t index, char* buffer) {
     char freqStr[10];
-    char Name[12] = ""; // 10 chars max + 1 pour \0 + 1 pour sécurité
-    uint8_t dcount;
+    char Name[12] = "";
     uint32_t f = HFreqs[index];
     buffer[0] = '\0';
     if (!f) return;
+
     snprintf(freqStr, sizeof(freqStr), "%u.%05u", f / 100000, f % 100000);
     RemoveTrailZeros(freqStr);
-    
+
     uint16_t Hchannel = BOARD_gMR_fetchChannel(f);
-    
+
+    char dcountStr[8];
     if (gCounthistory) {
-        dcount = HCount[index];
+        snprintf(dcountStr, sizeof(dcountStr), ",%u", (unsigned)HCount[index]);
     } else {
-        dcount = HCount[index] / 2;
+        uint16_t totalSec = HCount[index];
+        uint16_t min = totalSec / 60;
+        uint16_t sec = totalSec % 60;
+        snprintf(dcountStr, sizeof(dcountStr), ",%u:%02u", min, sec);
     }
-    
-    // Lecture du nom du canal (Argument 1: Index, Argument 2: Buffer)
+
     if (Hchannel != 0xFFFF) {
         ReadChannelName(Hchannel, Name);
-        Name[10] = '\0'; // Troncature explicite du nom à 10 caractères max
+        Name[10] = '\0';
     }
-    
+
     const char *blacklistPrefix = HBlacklisted[index] ? "#" : "";
 
-    // --- 2. Détermination de l'espace nécessaire (Max 18 chars) ---
-    const size_t MAX_LINE_CHARS = 18; 
-    
-    // Construction de la chaîne du compteur (Ex: ":5" ou ":1234")
-    char dcountStr[6]; 
-    snprintf(dcountStr, sizeof(dcountStr), ":%u", dcount);
-
+    const size_t MAX_LINE_CHARS = 18;
     size_t len_prefix = strlen(blacklistPrefix);
     size_t len_freq = strlen(freqStr);
     size_t len_name = strlen(Name);
     size_t len_dcount = strlen(dcountStr);
 
-    // Longueur requise pour la partie non-fréquence : [Prefix] + [Espace] + [Name] + [Dcount]
-    size_t critical_len = len_prefix + 1 + len_name + len_dcount; 
-    
+    size_t critical_len = len_prefix + 1 + len_name + len_dcount;
     size_t space_for_freq = 0;
-    
+
     if (MAX_LINE_CHARS > critical_len) {
-        // Cas nominal : Il y a de la place après le Nom et le Compteur.
         space_for_freq = MAX_LINE_CHARS - critical_len;
     } else {
-        // Cas critique : Le Nom et le Compteur sont trop longs. On supprime le Nom.
-        
-        // Recalcul de la longueur critique sans le Nom et l'espace qui le précède.
         critical_len = len_prefix + 1 + len_dcount;
-        
         if (MAX_LINE_CHARS > critical_len) {
             space_for_freq = MAX_LINE_CHARS - critical_len;
         } else {
-            // Cas très critique : On donne tout l'espace sauf le compteur (très court)
-            space_for_freq = MAX_LINE_CHARS - len_dcount; 
+            space_for_freq = MAX_LINE_CHARS - len_dcount;
         }
-        
-        // Suppression du nom pour l'affichage final
         Name[0] = '\0';
         len_name = 0;
     }
 
-    // --- 3. Construction de la chaîne finale (avec troncature de la Fréquence) ---
-    
-    // La longueur finale à afficher pour la fréquence (min(espace_disponible, longueur_réelle))
     size_t final_freq_len = (space_for_freq > len_freq) ? len_freq : space_for_freq;
-    
-    // Le format : [Prefix][Freq Tronquée][Espace si Nom][Name][Dcount]
-    
-    // Le snprintf final doit toujours garantir que la taille n'est pas dépassée (19)
-    snprintf(buffer, 19, "%s%.*s%s%s%s", 
+
+    snprintf(buffer, 19, "%s%.*s%s%s%s",
              blacklistPrefix,
-             (int)final_freq_len, // Troncature dynamique de la fréquence
-             freqStr, 
-             (len_name > 0) ? " " : "", // Espace si le Nom n'est pas vide (géré par la suppression ci-dessus)
-             Name, 
+             (int)final_freq_len,
+             freqStr,
+             (len_name > 0) ? " " : "",
+             Name,
              dcountStr);
 }
 
@@ -4089,7 +4107,17 @@ static void RenderParametersSelect() {
       static void RenderBandSelect() {RenderList("RUS BANDS:", ARRAY_SIZE(BParams),bandListSelectedIndex, bandListScrollOffset, GetBandItemText, false);}
 #endif
 
+static uint32_t CountTotalHistoryHits(void) {
+    uint32_t total = 0;
+    uint16_t limit = (indexFs > HISTORY_SIZE) ? HISTORY_SIZE : indexFs;
 
+    for (uint16_t i = 0; i < limit; i++) {
+        if (HFreqs[i] != 0) {
+            total += HCount[i];
+        }
+    }
+    return total;
+}
 
 static void RenderHistoryList() {
     char headerString[24];
@@ -4097,10 +4125,11 @@ static void RenderHistoryList() {
     memset(gFrameBuffer, 0, sizeof(gFrameBuffer));
 
     uint16_t count = CountValidHistoryItems();
+    uint32_t totalHits = CountTotalHistoryHits();
     
     if (!SpectrumMonitor) {
-        sprintf(headerString, "HISTORY: %d", count);
-      UI_PrintStringSmall(headerString, 1, LCD_WIDTH - 1, 0, 0);
+        sprintf(headerString, "HISTORY: %u/%lu", count, (unsigned long)totalHits);
+        UI_PrintStringSmall(headerString, 1, LCD_WIDTH - 1, 0, 0);
     } else {
         DrawMeter(0);
     }
