@@ -66,7 +66,7 @@ static uint32_t gScanStepsTotal = 0;
 static uint32_t gScanStepsLast = 0;
 static uint16_t gScanRate_x10 = 0;     // CH/s *10
 static uint16_t gScanRateTimerMs = 0;  // akumulator czasu
-
+static bool gHistoryRxReset = false;
 static uint16_t historyListIndex = 0;
 static uint16_t indexFs = 0;
 static int historyScrollOffset = 0;
@@ -2421,6 +2421,9 @@ static void OnKeyDown(uint8_t key) {
         }
         lastReceivingFreq = HFreqs[historyListIndex];
         SetF(lastReceivingFreq);
+		peak.f = lastReceivingFreq;
+		scanInfo.f = lastReceivingFreq;
+		gHistoryRxReset = true;
       } else {
         if (appMode==SCAN_BAND_MODE) {
             ToggleScanList(bl, 1);
@@ -2463,6 +2466,9 @@ static void OnKeyDown(uint8_t key) {
         }
         lastReceivingFreq = HFreqs[historyListIndex];
         SetF(lastReceivingFreq);
+		peak.f = lastReceivingFreq;
+		scanInfo.f = lastReceivingFreq;
+		gHistoryRxReset = true;
     } else {
         if (appMode==SCAN_BAND_MODE) {
             ToggleScanList(bl, 1);
@@ -2765,6 +2771,9 @@ case KEY_SIDE1:
             storedScanStepIndex = -1;
         }
         SetState(SPECTRUM);
+		if (historyListActive) {
+			gHistoryRxReset = true;
+		}
         WaitSpectrum = 0; //Prevent coming back to still directly
         
     break;
@@ -3185,11 +3194,20 @@ static void UpdateListening(void) { // called every 10ms
     static uint32_t stableFreq = 1;
     static uint16_t stableCount = 0;
     static bool SoundBoostsave = false; // Initialisation
-	        // --- NOWE: detekcja transmisji + czas ---
+    // --- NOWE: detekcja transmisji + czas ---
     static bool historyRxActive = false;
     static uint32_t historyRxFreq = 0;
     static uint16_t historyTimeMs = 0;
-	    uint16_t rssi = GetRssi();
+
+    // --- RESET licznika po zmianie pozycji w historii ---
+    if (gHistoryRxReset) {
+        historyRxActive = false;
+        historyRxFreq = 0;
+        historyTimeMs = 0;
+        gHistoryRxReset = false;
+    }
+
+    uint16_t rssi = GetRssi();
     scanInfo.rssi = rssi;
     uint16_t count = GetStepsCount() + 1;
 
@@ -3197,7 +3215,7 @@ static void UpdateListening(void) { // called every 10ms
 
     uint16_t i = peak.i;
     if (i >= count) i = count - 1;
-    
+
     if (SoundBoost != SoundBoostsave) {
         if (SoundBoost) {
             BK4819_WriteRegister(0x54, 0x90D1);    // default is 0x9009
@@ -3230,15 +3248,27 @@ static void UpdateListening(void) { // called every 10ms
             rssiHistory[j] = rssi;
         }
     }
-	
-	    // --- NOWE: start/stop transmisji ---
-    bool rxActive = isListening && peak.f >= 1400000 && peak.f <= 130000000;
+
+    // --- NOWE: ustal aktywną częstotliwość (dla history list) ---
+    uint32_t activeFreq = peak.f;
+    if (historyListActive) {
+        if (historyListIndex < indexFs && HFreqs[historyListIndex] != 0) {
+            activeFreq = HFreqs[historyListIndex];
+        } else if (lastReceivingFreq != 0) {
+            activeFreq = lastReceivingFreq;
+        }
+        peak.f = activeFreq; // synchronizacja
+    }
+
+    // --- NOWE: start/stop transmisji ---
+    bool rxActive = (isListening || SpectrumMonitor) &&
+                    activeFreq >= 1400000 && activeFreq <= 130000000;
 
     if (rxActive) {
-        if (!historyRxActive || historyRxFreq != peak.f) {
+        if (!historyRxActive || historyRxFreq != activeFreq) {
             FillfreqHistory(true);   // 1x na start transmisji
             historyRxActive = true;
-            historyRxFreq = peak.f;
+            historyRxFreq = activeFreq;
             historyTimeMs = 0;
         }
     } else {
@@ -3262,10 +3292,10 @@ static void UpdateListening(void) { // called every 10ms
     }
 
     // Détection de fréquence stable
-if (peak.f == stableFreq) {
-    if (++stableCount >= 2) {  // ~600ms
-        if (!SpectrumMonitor) FillfreqHistory(false);
-        stableCount = 0;
+    if (peak.f == stableFreq) {
+        if (++stableCount >= 2) {  // ~600ms
+            if (!SpectrumMonitor) FillfreqHistory(false);
+            stableCount = 0;
             if (gEeprom.BACKLIGHT_MAX > 5)
                 BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, 1);
             if(Backlight_On_Rx) BACKLIGHT_TurnOn();
@@ -3274,13 +3304,13 @@ if (peak.f == stableFreq) {
         stableFreq = peak.f;
         stableCount = 0;
     }
-    
+
     UpdateNoiseOff();
     if (!isListening) {
         UpdateNoiseOn();
         UpdateGlitch();
     }
-        
+
     spectrumElapsedCount += 10; //in ms
     uint32_t maxCount = (uint32_t)MaxListenTime * 1000;
 
