@@ -3925,69 +3925,6 @@ static void GetBandItemText(uint16_t index, char* buffer) {
             settings.bandEnabled[index] ? "*" : "");
 }
 
-static void GetHistoryItemText(uint16_t index, char* buffer) {
-    char freqStr[10];
-    char Name[12] = "";
-    uint32_t f = HFreqs[index];
-    buffer[0] = '\0';
-    if (!f) return;
-
-    snprintf(freqStr, sizeof(freqStr), "%u.%05u", f / 100000, f % 100000);
-    RemoveTrailZeros(freqStr);
-
-    uint16_t Hchannel = BOARD_gMR_fetchChannel(f);
-
-    char dcountStr[8];
-    if (gCounthistory) {
-        snprintf(dcountStr, sizeof(dcountStr), ",%u", (unsigned)HCount[index]);
-    } else {
-        uint16_t totalSec = HCount[index];
-        uint16_t min = totalSec / 60;
-        uint16_t sec = totalSec % 60;
-        snprintf(dcountStr, sizeof(dcountStr), ",%u:%02u", min, sec);
-    }
-
-    if (Hchannel != 0xFFFF) {
-        ReadChannelName(Hchannel, Name);
-        Name[10] = '\0';
-    }
-
-    const char *blacklistPrefix = HBlacklisted[index] ? "#" : "";
-
-    const size_t MAX_LINE_CHARS = 18;
-    size_t len_prefix = strlen(blacklistPrefix);
-    size_t len_freq = strlen(freqStr);
-    size_t len_name = strlen(Name);
-    size_t len_dcount = strlen(dcountStr);
-
-    size_t critical_len = len_prefix + 1 + len_name + len_dcount;
-    size_t space_for_freq = 0;
-
-    if (MAX_LINE_CHARS > critical_len) {
-        space_for_freq = MAX_LINE_CHARS - critical_len;
-    } else {
-        critical_len = len_prefix + 1 + len_dcount;
-        if (MAX_LINE_CHARS > critical_len) {
-            space_for_freq = MAX_LINE_CHARS - critical_len;
-        } else {
-            space_for_freq = MAX_LINE_CHARS - len_dcount;
-        }
-        Name[0] = '\0';
-        len_name = 0;
-    }
-
-    size_t final_freq_len = (space_for_freq > len_freq) ? len_freq : space_for_freq;
-
-    snprintf(buffer, 19, "%s%.*s%s%s%s",
-             blacklistPrefix,
-             (int)final_freq_len,
-             freqStr,
-             (len_name > 0) ? " " : "",
-             Name,
-             dcountStr);
-}
-
-
 //*******************************СПИСКИ*****************************// */
 static void RenderList(const char* title, uint16_t numItems, uint16_t selectedIndex, uint16_t scrollOffset,
                       void (*getItemText)(uint16_t index, char* buffer), bool invertSelectedBg) {
@@ -4036,6 +3973,239 @@ static void RenderList(const char* title, uint16_t numItems, uint16_t selectedIn
     }
     if (historyListActive && SpectrumMonitor > 0) DrawMeter(0);
     ST7565_BlitFullScreen();
+}
+
+static void DrawSmallStringInvertedAt(const char *pString, uint8_t start, uint8_t line)
+{
+    const unsigned int char_width  = ARRAY_SIZE(gFontSmall[0]);
+    const unsigned int spacing     = 1;
+    const unsigned int space_width = 4;
+
+    uint8_t *cursor = gFrameBuffer[line] + start;
+
+    for (size_t i = 0; i < strlen(pString); i++)
+    {
+        if (pString[i] > ' ')
+        {
+            const unsigned int index = (unsigned int)pString[i] - ' ' - 1;
+            if (index < ARRAY_SIZE(gFontSmall))
+            {
+                unsigned int char_width_used = char_width;
+                while (char_width_used > 0 && gFontSmall[index][char_width_used - 1] == 0)
+                    char_width_used--;
+
+                for (unsigned int c = 0; c < char_width_used; c++)
+                    cursor[c] = ~gFontSmall[index][c];
+
+                cursor += char_width_used + spacing;
+            }
+        }
+        else
+        {
+            cursor += space_width;
+        }
+    }
+}
+
+// --- szerokość małej czcionki (jak w UI_PrintStringSmall) ---
+static uint8_t GetSmallCharWidth(char c)
+{
+    const unsigned int char_width  = ARRAY_SIZE(gFontSmall[0]);
+    const unsigned int spacing     = 1;
+    const unsigned int space_width = 4;
+
+    if (c <= ' ')
+        return space_width;
+
+    if (c >= 127)
+        return 0;
+
+    const unsigned int index = (unsigned int)c - ' ' - 1;
+    if (index >= ARRAY_SIZE(gFontSmall))
+        return 0;
+
+    unsigned int char_width_used = char_width;
+    while (char_width_used > 0 && gFontSmall[index][char_width_used - 1] == 0)
+        char_width_used--;
+
+    return (uint8_t)(char_width_used + spacing);
+}
+
+static uint8_t GetSmallStringWidth(const char *s)
+{
+    uint16_t width = 0;
+    for (size_t i = 0; i < strlen(s); i++)
+        width += GetSmallCharWidth(s[i]);
+
+    if (width > 255) width = 255;
+    return (uint8_t)width;
+}
+
+static size_t GetMinFreqLen(const char *freqStr)
+{
+    size_t len = strlen(freqStr);
+    const char *dot = strchr(freqStr, '.');
+
+    if (!dot)
+        return len;
+
+    size_t minLen = (size_t)(dot - freqStr) + 2; // min: xxx.x
+    if (minLen < 5 && len >= 5)
+        minLen = 5;
+
+    if (minLen > len) minLen = len;
+    return minLen;
+}
+
+static void TrimHistoryLeftParts(const char *prefix, char *freq, char *name, uint8_t maxWidthPx)
+{
+    if (maxWidthPx == 0)
+    {
+        freq[0] = '\0';
+        name[0] = '\0';
+        return;
+    }
+
+    while (1)
+    {
+        char left[32];
+        if (name[0])
+            snprintf(left, sizeof(left), "%s%s %s", prefix, freq, name);
+        else
+            snprintf(left, sizeof(left), "%s%s", prefix, freq);
+
+        if (GetSmallStringWidth(left) <= maxWidthPx)
+            break;
+
+        if (name[0]) {
+            name[strlen(name) - 1] = '\0';
+            continue;
+        }
+
+        size_t len = strlen(freq);
+        size_t minLen = GetMinFreqLen(freq);
+        if (len > minLen) {
+            freq[len - 1] = '\0';
+            // usuń kropkę jeśli została na końcu
+            len = strlen(freq);
+            if (len > 0 && freq[len - 1] == '.') {
+                freq[len - 1] = '\0';
+            }
+            continue;
+        }
+
+        break;
+    }
+}
+
+static bool GetHistoryItemParts(uint16_t index, char *prefixOut, char *freqOut, char *nameOut, char *rightOut)
+{
+    uint32_t f = HFreqs[index];
+    if (!f) return false;
+
+    char freqStr[12];
+    snprintf(freqStr, sizeof(freqStr), "%u.%05u", f / 100000, f % 100000);
+    RemoveTrailZeros(freqStr);
+
+    uint16_t Hchannel = BOARD_gMR_fetchChannel(f);
+
+    if (gCounthistory) {
+        snprintf(rightOut, 10, "%u", (unsigned)HCount[index]);
+    } else {
+        uint16_t totalSec = HCount[index];
+        uint16_t min = totalSec / 60;
+        uint16_t sec = totalSec % 60;
+        snprintf(rightOut, 10, "%u:%02u", min, sec);
+    }
+
+    if (Hchannel != 0xFFFF) {
+        ReadChannelName(Hchannel, nameOut);
+        nameOut[10] = '\0';
+    } else {
+        nameOut[0] = '\0';
+    }
+
+    prefixOut[0] = HBlacklisted[index] ? '#' : '\0';
+    prefixOut[1] = '\0';
+
+    strncpy(freqOut, freqStr, 11);
+    freqOut[11] = '\0';
+
+    return true;
+}
+
+static uint32_t CountTotalHistoryHits(void);
+
+static void RenderHistoryList() {
+    char headerString[24];
+    memset(gFrameBuffer, 0, sizeof(gFrameBuffer));
+
+    uint16_t count = CountValidHistoryItems();
+    uint32_t totalHits = CountTotalHistoryHits();
+
+    if (!SpectrumMonitor) {
+        sprintf(headerString, "HISTORY: %u/%lu", count, (unsigned long)totalHits);
+        UI_PrintStringSmall(headerString, 1, LCD_WIDTH - 1, 0, 0);
+    } else {
+        DrawMeter(0);
+    }
+
+    const uint16_t FIRST_ITEM_LINE = 1;
+    const uint16_t MAX_LINES = 6;
+
+    uint16_t scrollOffset = historyScrollOffset;
+    uint16_t selectedIndex = historyListIndex;
+
+    if (count <= MAX_LINES) {
+        scrollOffset = 0;
+    } else if (selectedIndex < scrollOffset) {
+        scrollOffset = selectedIndex;
+    } else if (selectedIndex >= scrollOffset + MAX_LINES) {
+        scrollOffset = selectedIndex - MAX_LINES + 1;
+    }
+
+    uint8_t linesDrawn = 0;
+
+    for (uint8_t i = 0; linesDrawn < MAX_LINES; i++) {
+        uint16_t itemIndex = i + scrollOffset;
+        if (itemIndex >= count) break;
+
+        char prefix[2] = "";
+        char freq[12] = "";
+        char name[12] = "";
+        char rightText[10] = "";
+        if (!GetHistoryItemParts(itemIndex, prefix, freq, name, rightText))
+            continue;
+
+        uint8_t rightWidth = GetSmallStringWidth(rightText);
+        uint8_t rightX = (rightWidth < LCD_WIDTH) ? (LCD_WIDTH - rightWidth) : 0;
+        uint8_t maxLeftWidth = (rightX > 1) ? (rightX - 1) : 0;
+
+        TrimHistoryLeftParts(prefix, freq, name, maxLeftWidth);
+
+        char leftText[32];
+        if (name[0])
+            snprintf(leftText, sizeof(leftText), "%s%s %s", prefix, freq, name);
+        else
+            snprintf(leftText, sizeof(leftText), "%s%s", prefix, freq);
+
+        uint16_t lineNumber = FIRST_ITEM_LINE + linesDrawn;
+
+        if (itemIndex == selectedIndex) {
+            for (uint8_t x = 0; x < LCD_WIDTH; x++) {
+                for (uint8_t y = lineNumber * 8; y < (lineNumber + 1) * 8; y++) {
+                    PutPixel(x, y, true);
+                }
+            }
+            DrawSmallStringInvertedAt(leftText, 1, lineNumber);
+			DrawSmallStringInvertedAt(rightText, rightX, lineNumber);
+        } else {
+            UI_PrintStringSmall(leftText, 1, 0, lineNumber, 0);
+            UI_PrintStringSmall(rightText, rightX, 0, lineNumber, 0);
+        }
+
+        linesDrawn++;
+    }
 }
 
 static void RenderScanListSelect() {
@@ -4134,62 +4304,7 @@ static uint32_t CountTotalHistoryHits(void) {
     return total;
 }
 
-static void RenderHistoryList() {
-    char headerString[24];
-    // Clear display buffer
-    memset(gFrameBuffer, 0, sizeof(gFrameBuffer));
 
-    uint16_t count = CountValidHistoryItems();
-    uint32_t totalHits = CountTotalHistoryHits();
-    
-    if (!SpectrumMonitor) {
-        sprintf(headerString, "HISTORY: %u/%lu", count, (unsigned long)totalHits);
-        UI_PrintStringSmall(headerString, 1, LCD_WIDTH - 1, 0, 0);
-    } else {
-        DrawMeter(0);
-    }
-    
-    const uint16_t FIRST_ITEM_LINE = 1;
-    const uint16_t MAX_LINES = 6;
-    
-    uint16_t scrollOffset = historyScrollOffset;
-    uint16_t selectedIndex = historyListIndex;
-    
-    if (count <= MAX_LINES) {
-        scrollOffset = 0;
-    } else if (selectedIndex < scrollOffset) {
-        scrollOffset = selectedIndex;
-    } else if (selectedIndex >= scrollOffset + MAX_LINES) {
-        scrollOffset = selectedIndex - MAX_LINES + 1;
-    }
-    
-    uint8_t linesDrawn = 0;
-
-    for (uint8_t i = 0; linesDrawn < MAX_LINES; i++) {
-        uint16_t itemIndex = i + scrollOffset;
-        if (itemIndex >= count) break;
-
-        char itemText[32];
-        GetHistoryItemText(itemIndex, itemText);
-
-        if (itemText[0] == '\0') continue;
-
-        uint16_t lineNumber = FIRST_ITEM_LINE + linesDrawn;
-
-        if (itemIndex == selectedIndex) {
-            for (uint8_t x = 0; x < LCD_WIDTH; x++) {
-                for (uint8_t y = lineNumber * 8; y < (lineNumber + 1) * 8; y++) {
-                    PutPixel(x, y, true);
-                }
-            }
-            UI_PrintStringSmall(itemText, 1, 0, lineNumber, 1);
-        } else {
-            UI_PrintStringSmall(itemText, 1, 0, lineNumber, 0);
-        }
-
-        linesDrawn++;
-    }
-}
 
 #ifdef ENABLE_SCANLIST_SHOW_DETAIL
 static void BuildScanListChannels(uint8_t scanListIndex) {
