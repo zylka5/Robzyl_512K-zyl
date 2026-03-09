@@ -896,7 +896,7 @@ static void FillfreqHistory(bool countHit)
         }
     }
 
-    // --- NOWE: nie zmieniaj kolejności w trybach Freq Lock / Monitor / History Scan ---
+    // --- NOWE: nie zmieniaj kolejności i nie dodawaj nowych w trybach Freq Lock / Monitor / History Scan ---
     bool freezeOrder = historyListActive && (SpectrumMonitor || gHistoryScan);
     if (freezeOrder) {
         if (foundIndex != 0xFFFF) {
@@ -904,13 +904,6 @@ static void FillfreqHistory(bool countHit)
                 HCount[foundIndex] = (foundCount + 1);
             } else {
                 HCount[foundIndex] = foundCount;
-            }
-        } else {
-            if (indexFs < HISTORY_SIZE) {
-                HFreqs[indexFs]       = f;
-                HCount[indexFs]       = (gCounthistory && countHit) ? 1 : 0;
-                HBlacklisted[indexFs] = false;
-                indexFs++;
             }
         }
         lastReceivingFreq = f;
