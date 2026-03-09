@@ -1,5 +1,5 @@
 AUTHOR_STRING := ""
-VERSION_STRING := V6.7b1
+VERSION_STRING := V6.7b2
 # compile options (see README.md for descriptions)
 # 0 = disable
 # 1 = enable
@@ -13,7 +13,7 @@ ENABLE_LTO                    := 1
 # ---- STOCK QUANSHENG FERATURES ----
 ENABLE_UART                   := 1
 ENABLE_FMRADIO                := 1
-ENABLE_TX1750                 := 1
+ENABLE_TX1750                 := 0
 # ---- CUSTOM MODS ----
 ENABLE_BIG_FREQ                         := 1
 ENABLE_SMALL_BOLD                       := 1
