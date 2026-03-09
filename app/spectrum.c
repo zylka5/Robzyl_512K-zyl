@@ -2597,9 +2597,18 @@ case KEY_MENU: //History
       }
   break;
 
-  case KEY_EXIT: //exit from history or spectrum
+case KEY_EXIT: //exit from history or spectrum
   
     if (historyListActive == true) {
+      // jeśli jesteśmy w Freq Lock, pierwszy EXIT tylko wraca do skanowania
+      if (SpectrumMonitor == 1) {
+          SpectrumMonitor = 0;       // powrót do normalnego skanowania
+          SetF(scanInfo.f);
+          ShowOSDPopup("SCAN");
+          break;
+      }
+
+      // dopiero drugi EXIT wychodzi z historii
       gHistoryScan = false;
       SetState(SPECTRUM);
       historyListActive = false;
