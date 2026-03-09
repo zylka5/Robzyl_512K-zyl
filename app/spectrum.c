@@ -56,7 +56,7 @@ static volatile uint8_t gRequestedSpectrumState = 0;
 #ifdef ENABLE_EEPROM_512K
   #define HISTORY_SIZE 100
 #else
-  #define HISTORY_SIZE 500
+  #define HISTORY_SIZE 400
 #endif
 
 static uint8_t cachedValidScanListCount = 0;
@@ -883,26 +883,37 @@ static void FillfreqHistory(bool countHit)
     uint32_t f = peak.f;
     if (f == 0 || f < 1400000 || f > 130000000) return;
 
-    uint16_t foundIndex = 0xFFFF;
-    uint16_t foundCount = 0;
-    bool foundBlacklisted = false;
-
+    uint16_t found = 0xFFFF;
     for (uint16_t i = 0; i < indexFs; i++) {
-        if (HFreqs[i] == f) {
-            foundIndex = i;
-            foundCount = HCount[i];
-            foundBlacklisted = HBlacklisted[i];
-            break;
-        }
+        if (HFreqs[i] == f) { found = i; break; }
     }
 
-    if (foundIndex != 0xFFFF) {
-        for (uint16_t i = foundIndex; i + 1 < indexFs; i++) {
+    // zamrożenie kolejności w FreqLock / Monitor / HistoryScan
+    if (historyListActive && (SpectrumMonitor || gHistoryScan)) {
+        if (found != 0xFFFF) {
+            if (gCounthistory && countHit) HCount[found]++;
+        } else if (indexFs < HISTORY_SIZE) {
+            HFreqs[indexFs] = f;
+            HCount[indexFs] = (gCounthistory && countHit) ? 1 : 0;
+            HBlacklisted[indexFs] = 0;
+            indexFs++;
+        }
+        lastReceivingFreq = f;
+        return;
+    }
+
+    // przenieś istniejący wpis na początek
+    uint8_t bl = 0;
+    uint16_t cnt = 0;
+    if (found != 0xFFFF) {
+        bl  = HBlacklisted[found];
+        cnt = HCount[found];
+        for (uint16_t i = found; i + 1 < indexFs; i++) {
             HFreqs[i]       = HFreqs[i + 1];
             HCount[i]       = HCount[i + 1];
             HBlacklisted[i] = HBlacklisted[i + 1];
         }
-        if (indexFs > 0) indexFs--;
+        if (indexFs) indexFs--;
     }
 
     uint16_t limit = (indexFs < HISTORY_SIZE) ? indexFs : (HISTORY_SIZE - 1);
@@ -913,13 +924,10 @@ static void FillfreqHistory(bool countHit)
     }
 
     HFreqs[0] = f;
-    HBlacklisted[0] = foundBlacklisted;
+    HBlacklisted[0] = bl;
 
-    if (gCounthistory && countHit) {
-        HCount[0] = (foundIndex != 0xFFFF) ? (foundCount + 1) : 1;
-    } else {
-        HCount[0] = (foundIndex != 0xFFFF) ? foundCount : 0;
-    }
+    if (gCounthistory && countHit) HCount[0] = (found != 0xFFFF) ? (cnt + 1) : 1;
+    else                           HCount[0] = (found != 0xFFFF) ? cnt : 0;
 
     if (indexFs < HISTORY_SIZE) indexFs++;
     historyListIndex = 0;
